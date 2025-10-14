@@ -28,5 +28,18 @@ Optional arguments:
 Nope. Contributions welcome. If a cell type isn't implemented or You need support for a older excel version feel free to open up a PR or fork the project.
 
 
+# Development
 
+Get [nix](https://nixos.org/) and set it up with [direnv](https://direnv.net/). Run:
 
+`direnv allow`
+
+This should download all package dependencies and set them up your current shell.
+
+`zig build cdb` - generates a `compile_commands.json` file, useful if you want to use clangd LSP autocomplete
+
+`zig build run -- myExcelFile.xlsx` - runs the application against the provided file
+
+`zig build compile -Doptimize=ReleaseSmall` - generates the target executable to `./zig-out/bin/excel2csv`
+
+`zig build run-tests -- --test-case="excelRow2Csv"` - runs just "excelRow2Csv" test cases 
