@@ -1,0 +1,20 @@
+.{
+    .name = .excel2csv_cpp,
+    .version = "0.0.0",
+
+    .fingerprint = 0x5a169f47f40c7883, // Changing this has security and trust implications.
+
+    .minimum_zig_version = "0.14.1",
+
+    .dependencies = .{
+        .compile_commands = .{
+            .url = "https://github.com/the-argus/zig-compile-commands/archive/70fb439897e12cae896c071717d7c9c382918689.tar.gz",
+            .hash = "zig_compile_commands-0.0.1-OZg5-ULBAABTh3NXO3WXoSUX1474ez0EouuoT2yDANhz",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
