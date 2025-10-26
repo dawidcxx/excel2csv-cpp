@@ -14,6 +14,7 @@ ZipUtils::readFileChunked(unzFile file, std::string_view zipEntry) {
     throw MalformedZipFileException(
         std::format("Failed to locate file '{}' in ZIP archive", zipEntry));
   }
+  
 
   if (unzOpenCurrentFile(file) != UNZ_OK) {
     throw MalformedZipFileException(
