@@ -1,6 +1,6 @@
 const std = @import("std");
 const zcc = @import("compile_commands");
-// const cpp = @import("cppkit_zig");
+const cpp = @import("cppkit_zig");
 
 var INCLUDE_PATH: []const u8 = undefined;
 var CDB_TARGETS: std.ArrayListUnmanaged(*std.Build.Step.Compile) = undefined;
@@ -39,6 +39,7 @@ pub fn build(b: *std.Build) void {
     linkupModule(app_mod);
 
     const app_exe = b.addExecutable(.{ .name = "excel2csv", .root_module = app_mod });
+    cpp.mark(app_exe);
     CDB_TARGETS.appendAssumeCapacity(app_exe);
 
     const app_exe_run = b.addRunArtifact(app_exe);
@@ -94,6 +95,8 @@ pub fn build(b: *std.Build) void {
     const compile_step = b.step("compile", "Output executables of the build process");
     compile_step.dependOn(&output_test_exe.step);
     compile_step.dependOn(&output_app_exe.step);
+
+    cpp.addCompileCommandsStep(b);
 }
 
 fn linkupModule(mod: *std.Build.Module) void {

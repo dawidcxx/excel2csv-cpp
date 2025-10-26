@@ -1,7 +1,7 @@
 const std = @import("std");
 
 // 100 build targets out be enough for everyone :)
-const marked_targets: [100]*std.Build.Step.Compile = @splat(null);
+var marked_targets: [100]?*std.Build.Step.Compile = @splat(null);
 
 pub fn mark(target: *std.Build.Step.Compile) void {
     var i: usize = 0;
@@ -31,7 +31,6 @@ pub fn addCompileCommandsStep(b: *std.Build) void {
 
 pub fn build(b: *std.Build) void {
     _ = b;
-    @panic("cppkit-zig is not meant to be build");
 }
 
 const CompileCommandsEntry = struct {
@@ -46,8 +45,15 @@ fn makeCompileCommandsStep(step: *std.Build.Step, make_options: std.Build.Step.M
     _ = make_options;
     const b = step.owner;
     const alloc = b.allocator;
-    var root_level_steps: std.ArrayListUnmanaged(*std.Build.Step) = .initCapacity(alloc, 64);
+    var root_level_steps: std.ArrayListUnmanaged(*std.Build.Step) = try .initCapacity(alloc, 64);
     resolveRootLevelSteps(step, &root_level_steps);
+
+    var compile_command_entries: std.ArrayListUnmanaged(CompileCommandsEntry) = try .initCapacity(alloc, 256);
+    for (root_level_steps.items) |root_level_step| {
+        gatherCompileCommandEntries(alloc, root_level_step, &compile_command_entries) catch {
+            @panic("Error while gathering compile command entries");
+        };
+    }
 }
 
 fn resolveRootLevelSteps(step: *std.Build.Step, root_levels: *std.ArrayListUnmanaged(*std.Build.Step)) void {
@@ -56,4 +62,14 @@ fn resolveRootLevelSteps(step: *std.Build.Step, root_levels: *std.ArrayListUnman
             root_levels.appendAssumeCapacity(dep);
         }
     }
+}
+
+fn gatherCompileCommandEntries(
+    alloc: std.mem.Allocator,
+    step: *std.Build.Step,
+    compile_command_entries: *std.ArrayListUnmanaged(CompileCommandsEntry),
+) !void {
+    _ = alloc;
+    _ = compile_command_entries;
+    _ = step;
 }
