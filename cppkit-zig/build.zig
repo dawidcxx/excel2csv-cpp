@@ -35,7 +35,6 @@ pub fn build(b: *std.Build) void {
 
 const CompileCommandsEntry = struct {
     file: []const u8,
-    std_lib: []const u8,
     flags: []const []const u8,
     linkObjects: []const []const u8,
     includes: []const []const u8,
@@ -45,22 +44,18 @@ fn makeCompileCommandsStep(step: *std.Build.Step, make_options: std.Build.Step.M
     _ = make_options;
     const b = step.owner;
     const alloc = b.allocator;
-    var root_level_steps: std.ArrayListUnmanaged(*std.Build.Step) = try .initCapacity(alloc, 64);
-    resolveRootLevelSteps(step, &root_level_steps);
+    const root_levels = b.top_level_steps.values();
 
     var compile_command_entries: std.ArrayListUnmanaged(CompileCommandsEntry) = try .initCapacity(alloc, 256);
-    for (root_level_steps.items) |root_level_step| {
+    for (root_levels) |root_level| {
+        const root_level_step = &root_level.step;
         gatherCompileCommandEntries(alloc, root_level_step, &compile_command_entries) catch {
             @panic("Error while gathering compile command entries");
         };
     }
-}
 
-fn resolveRootLevelSteps(step: *std.Build.Step, root_levels: *std.ArrayListUnmanaged(*std.Build.Step)) void {
-    for (step.dependants.items) |dep| {
-        if (dep.id == .top_level) {
-            root_levels.appendAssumeCapacity(dep);
-        }
+    for (compile_command_entries.items) |entry| {
+        std.log.info("SUCCESS: Gathered cpp file {s}", .{entry.file});
     }
 }
 
@@ -69,7 +64,28 @@ fn gatherCompileCommandEntries(
     step: *std.Build.Step,
     compile_command_entries: *std.ArrayListUnmanaged(CompileCommandsEntry),
 ) !void {
-    _ = alloc;
-    _ = compile_command_entries;
-    _ = step;
+    for (step.dependencies.items) |dependency| {
+        if (dependency.cast(std.Build.Step.Compile)) |compile_step| {
+            std.log.info("Dependency name={s}", .{dependency.name});
+            for (compile_step.root_module.link_objects.items) |link_object| {
+                switch (link_object) {
+                    .c_source_files => |csf| {
+                        for (csf.files) |f| {
+                            std.log.info(".c_source_files branch hit: {s}", .{f});
+                        }
+                    },
+                    .c_source_file => |csf| {
+                        std.log.info("Looking at {s}", .{csf.file.getDisplayName()});
+                        switch (csf) {
+                            else => {
+                                std.log.info("Looking at {s}", .{csf.file.getDisplayName()});
+                            },
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+        try gatherCompileCommandEntries(alloc, dependency, compile_command_entries);
+    }
 }

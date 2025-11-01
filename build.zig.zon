@@ -13,7 +13,7 @@
         },
         .cppkit_zig = .{
             .url = "./cppkit-zig",
-            .hash = "cppkit_zig-0.0.0-HDZQZFQKAAB8u1wveBMiGfMey3dyDy6zIIWXhWEREQWZ",
+            .hash = "cppkit_zig-0.0.0-HDZQZDcNAACgjLH_-VJMmVU0geJusGb55emZ9_fDK0_F",
         },
     },
     .paths = .{
