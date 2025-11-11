@@ -46,103 +46,81 @@ fn makeCompileCommandsStep(step: *std.Build.Step, make_options: std.Build.Step.M
     const alloc = b.allocator;
     const root_levels = b.top_level_steps.values();
 
-    var compile_command_entries: std.ArrayListUnmanaged(CompileCommandsEntry) = try .initCapacity(alloc, 256);
+    var compile_commands_db = CompileCommandsDb.init(alloc);
     for (root_levels) |root_level| {
         const root_level_step = &root_level.step;
-        gatherCompileCommandEntries(alloc, root_level_step, &compile_command_entries) catch {
+        gatherCompileCommandEntries(alloc, root_level_step, &compile_commands_db) catch {
             @panic("Error while gathering compile command entries");
         };
     }
 
-    for (compile_command_entries.items) |entry| {
-        const flags = try std.mem.join(alloc, ",", entry.flags);
-        defer alloc.free(flags);
-        const libs = try std.mem.join(alloc, ",", entry.linkObjects);
-        defer alloc.free(libs);
-        const headers = try std.mem.join(alloc, ",", entry.includes);
-        defer alloc.free(headers);
-        std.log.info("SUCCESS: Gathered cpp file '{s}' with flags '{s}' with headers '{s}' ", .{ entry.file, flags, headers });
-    }
+    compile_commands_db.forEach(printCompileCommand);
 }
 
 fn gatherCompileCommandEntries(
     alloc: std.mem.Allocator,
     step: *std.Build.Step,
-    compile_command_entries: *std.ArrayListUnmanaged(CompileCommandsEntry),
+    compile_commands_db: *CompileCommandsDb,
 ) !void {
     for (step.dependencies.items) |dependency| {
         if (dependency.cast(std.Build.Step.Compile)) |compile_step| {
-            var headers: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, compile_step.root_module.include_dirs.items.len);
+            var headers: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, 16);
             defer headers.deinit(alloc);
-            defer for (headers.items) |h| alloc.free(h);
-
             for (compile_step.root_module.include_dirs.items) |d| {
                 switch (d.path) {
                     .cwd_relative => |path| {
-                        headers.appendAssumeCapacity(try alloc.dupe(u8, path));
+                        try headers.append(alloc, path);
                     },
                     else => {},
                 }
             }
 
-            var libraries: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, compile_step.root_module.link_objects.items.len);
+            var libraries: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, 16);
             defer libraries.deinit(alloc);
-            defer for (libraries.items) |l| alloc.free(l);
-
-            var source_files_and_flags: std.ArrayListUnmanaged([2][]const []const u8) = try .initCapacity(alloc, compile_step.root_module.link_objects.items.len * 2);
-            // defer source_files_and_flags.deinit(alloc);
-            // defer for (source_files_and_flags.items) |item| {
-            //     for (item[0]) |file| alloc.free(file);
-            //     for (item[1]) |flag| alloc.free(flag);
-            // };
-
             for (compile_step.root_module.link_objects.items) |link_object| {
-                on_item: {
-                    switch (link_object) {
-                        .system_lib => |sl| {
-                            libraries.appendAssumeCapacity(sl.name);
-                        },
-                        .c_source_file => |cs| {
-                            const file = blk: {
-                                switch (cs.file) {
-                                    .cwd_relative => |path| {
-                                        break :blk try alloc.dupe(u8, path);
-                                    },
-                                    else => {
-                                        break :on_item;
-                                    },
-                                }
-                            };
-                            const file_container = try alloc.alloc([]const u8, 1);
-                            file_container[0] = file;
-                            const flags = try cloneStringSlice(alloc, cs.flags);
-                            try source_files_and_flags.append(alloc, .{ file_container, flags });
-                        },
-                        .c_source_files => |csf| {
-                            const flags = try cloneStringSlice(alloc, csf.flags);
-                            const files = try cloneStringSlice(alloc, csf.files);
-                            try source_files_and_flags.append(alloc, .{ files, flags });
-                        },
-                        else => {},
-                    }
+                switch (link_object) {
+                    .system_lib => |sl| {
+                        try libraries.append(alloc, sl.name);
+                    },
+                    else => {},
                 }
             }
 
-            for (source_files_and_flags.items) |source_file_and_flags| {
-                const files = source_file_and_flags[0];
-                const flags = source_file_and_flags[1];
-                for (files) |file| {
-                    const compile_commands_entry: CompileCommandsEntry = .{
-                        .file = file,
-                        .flags = flags,
-                        .includes = try headers.toOwnedSlice(alloc),
-                        .linkObjects = try libraries.toOwnedSlice(alloc),
-                    };
-                    try compile_command_entries.append(alloc, compile_commands_entry);
+            for (compile_step.root_module.link_objects.items) |link_object| {
+                switch (link_object) {
+                    .c_source_file => |csf| {
+                        const file_path = getFilePath(csf.file) orelse break;
+                        try compile_commands_db.update(
+                            file_path,
+                            headers.items,
+                            libraries.items,
+                            csf.flags,
+                        );
+                    },
+                    .c_source_files => |csfs| {
+                        for (csfs.files) |file_path| {
+                            try compile_commands_db.update(
+                                file_path,
+                                headers.items,
+                                libraries.items,
+                                csfs.flags,
+                            );
+                        }
+                    },
+                    else => {},
                 }
             }
         }
-        try gatherCompileCommandEntries(alloc, dependency, compile_command_entries);
+        try gatherCompileCommandEntries(alloc, dependency, compile_commands_db);
+    }
+}
+
+fn getFilePath(lazyPath: std.Build.LazyPath) ?[]const u8 {
+    switch (lazyPath) {
+        .cwd_relative => |cwd| {
+            return cwd;
+        },
+        else => return null,
     }
 }
 
@@ -152,4 +130,177 @@ fn cloneStringSlice(gpa: std.mem.Allocator, container: []const []const u8) error
         result[i] = try gpa.dupe(u8, str);
     }
     return result;
+}
+
+const CompileCommand = struct {
+    file_name: []const u8,
+    flags: StringSet,
+    headers: StringSet,
+    libraries: StringSet,
+
+    pub fn init(file_name: []const u8) CompileCommand {
+        return .{
+            .file_name = file_name,
+            .flags = .init(),
+            .headers = .init(),
+            .libraries = .init(),
+        };
+    }
+};
+
+const CompileCommandsDb = struct {
+    const Self = @This();
+
+    arena: std.heap.ArenaAllocator,
+    compile_commands_by_file_name: std.StringHashMapUnmanaged(*CompileCommand),
+
+    pub fn init(gpa: std.mem.Allocator) Self {
+        const arena = std.heap.ArenaAllocator.init(gpa);
+        return .{
+            .arena = arena,
+            .compile_commands_by_file_name = std.StringHashMapUnmanaged(*CompileCommand){},
+        };
+    }
+
+    pub fn forEach(self: *Self, callback: fn (cc: CompileCommand) void) void {
+        var it = self.compile_commands_by_file_name.valueIterator();
+        while (it.next()) |cc| {
+            callback(cc.*.*);
+        }
+    }
+
+    pub fn update(
+        self: *Self,
+        file_name: []const u8,
+        headers: []const []const u8,
+        libraries: []const []const u8,
+        flags: []const []const u8,
+    ) !void {
+        const alloc = self.arena.allocator();
+        const cc_gop = try self.compile_commands_by_file_name.getOrPut(alloc, file_name);
+        var compile_command = blk: {
+            if (cc_gop.found_existing) {
+                break :blk cc_gop.value_ptr.*;
+            } else {
+                const owned_file_name = try alloc.dupe(u8, file_name);
+                const cc = try alloc.create(CompileCommand);
+                cc.* = .init(owned_file_name);
+                cc_gop.value_ptr.* = cc;
+                break :blk cc;
+            }
+        };
+        for (headers) |header| {
+            if (!compile_command.headers.has(header)) {
+                const owned_header = try alloc.dupe(u8, header);
+                try compile_command.headers.add(alloc, owned_header);
+            }
+        }
+        for (libraries) |library| {
+            if (!compile_command.libraries.has(library)) {
+                const owned_library = try alloc.dupe(u8, library);
+                try compile_command.libraries.add(alloc, owned_library);
+            }
+        }
+        for (flags) |flag| {
+            if (!compile_command.libraries.has(flag)) {
+                const owned_flag = try alloc.dupe(u8, flag);
+                try compile_command.flags.add(alloc, owned_flag);
+            }
+        }
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
+    }
+};
+
+const StringSet = struct {
+    const Self = @This();
+    map: std.StringHashMapUnmanaged(void),
+
+    pub fn init() StringSet {
+        const backing_map = std.StringHashMapUnmanaged(void){};
+        return .{ .map = backing_map };
+    }
+
+    fn add(self: *Self, alloc: std.mem.Allocator, key: []const u8) !void {
+        try self.map.put(alloc, key, {});
+    }
+
+    fn has(self: *Self, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    fn count(self: *Self) u32 {
+        return self.map.count();
+    }
+
+    fn deinit(self: *Self, alloc: std.mem.Allocator) void {
+        self.map.deinit(alloc);
+    }
+};
+
+fn printCompileCommand(cc: CompileCommand) void {
+    std.log.info("File: {s}", .{cc.file_name});
+    std.log.info("  Headers: {d} items", .{cc.headers.map.count()});
+    var header_it = cc.headers.map.keyIterator();
+    while (header_it.next()) |header| {
+        std.log.info("    - {s}", .{header.*});
+    }
+    std.log.info("  Libraries: {d} items", .{cc.libraries.map.count()});
+    var lib_it = cc.libraries.map.keyIterator();
+    while (lib_it.next()) |library| {
+        std.log.info("    - {s}", .{library.*});
+    }
+    std.log.info("  Flags: {d} items", .{cc.flags.map.count()});
+    var flag_it = cc.flags.map.keyIterator();
+    while (flag_it.next()) |flag| {
+        std.log.info("    - {s}", .{flag.*});
+    }
+}
+
+test "CompileCommandsDb checks" {
+    std.testing.log_level = .debug;
+    const alloc = std.testing.allocator;
+    var db = CompileCommandsDb.init(alloc);
+    try db.update("random.cpp", &.{"/opt/foo/include"}, &.{"/opt/foo/lib"}, &.{});
+    try db.update("bar.cpp", &.{ "/opt/bar/include", "/opt/foo/include" }, &.{ "/opt/bar/lib", "/opt/foo/lib" }, &.{});
+    try db.update("bar.cpp", &.{ "/opt/quaz/include", "/opt/quaz/include" }, &.{ "/opt/quaz/lib", "/opt/quaz/lib" }, &.{});
+    db.forEach(printCompileCommand);
+    db.deinit();
+}
+
+test "StringSet basic operations" {
+    std.testing.log_level = .debug;
+    const alloc = std.testing.allocator;
+    var string_set1: StringSet = .init();
+    defer string_set1.deinit(alloc);
+
+    var string_set2: StringSet = .init();
+    defer string_set2.deinit(alloc);
+
+    // Test adding strings
+    try string_set1.add(alloc, "test1");
+    try string_set1.add(alloc, "test2");
+    try string_set1.add(alloc, "test4");
+    try string_set1.add(alloc, "test5");
+    try string_set1.add(alloc, "test6");
+    try string_set1.add(alloc, "test7");
+    try string_set1.add(alloc, "test8");
+    try string_set1.add(alloc, "test9");
+    try string_set1.add(alloc, "test10");
+
+    // Test contains
+    try std.testing.expect(string_set1.has("test1"));
+    try std.testing.expect(string_set1.has("test2"));
+    try std.testing.expect(!string_set1.has("test3"));
+
+    // Test adding duplicate
+    try string_set1.add(alloc, "test1");
+    try std.testing.expect(string_set1.has("test1"));
+
+    try string_set2.add(alloc, "foo");
+    try string_set1.add(alloc, "bar");
+    try std.testing.expect(!string_set1.has("foo"));
+    try std.testing.expect(!string_set2.has("bar"));
 }
