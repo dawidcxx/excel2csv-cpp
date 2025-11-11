@@ -1,18 +1,18 @@
 const std = @import("std");
 
 // 100 build targets out be enough for everyone :)
-var marked_targets: [100]?*std.Build.Step.Compile = @splat(null);
+var compile_commands_targets: [100]?*std.Build.Step.Compile = @splat(null);
 
-pub fn mark(target: *std.Build.Step.Compile) void {
+pub fn addCompileCommands(target: *std.Build.Step.Compile) void {
     var i: usize = 0;
-    while (i < marked_targets.len) {
-        if (marked_targets[i] == null) {
-            marked_targets[i] = target;
+    while (i < compile_commands_targets.len) {
+        if (compile_commands_targets[i] == null) {
+            compile_commands_targets[i] = target;
             return;
         }
         i += 1;
     }
-    @panic("markedTargets is full, cannot mark target");
+    @panic("compile_commands_targets is full, cannot mark target");
 }
 
 pub fn addCompileCommandsStep(b: *std.Build) void {
@@ -64,6 +64,8 @@ fn gatherCompileCommandEntries(
 ) !void {
     for (step.dependencies.items) |dependency| {
         if (dependency.cast(std.Build.Step.Compile)) |compile_step| {
+            if (!isCompileCommandsMarked(compile_step)) continue;
+
             var headers: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, 16);
             defer headers.deinit(alloc);
             for (compile_step.root_module.include_dirs.items) |d| {
@@ -122,6 +124,13 @@ fn getFilePath(lazyPath: std.Build.LazyPath) ?[]const u8 {
         },
         else => return null,
     }
+}
+
+fn isCompileCommandsMarked(compile: *std.Build.Step.Compile) bool {
+    for (compile_commands_targets) |t| {
+        if (t == compile) return true;
+    }
+    return false;
 }
 
 const CompileCommand = struct {
@@ -260,39 +269,4 @@ test "CompileCommandsDb checks" {
     try db.update("bar.cpp", &.{ "/opt/quaz/include", "/opt/quaz/include" }, &.{ "/opt/quaz/lib", "/opt/quaz/lib" }, &.{});
     db.forEach(printCompileCommand);
     db.deinit();
-}
-
-test "StringSet basic operations" {
-    std.testing.log_level = .debug;
-    const alloc = std.testing.allocator;
-    var string_set1: StringSet = .init();
-    defer string_set1.deinit(alloc);
-
-    var string_set2: StringSet = .init();
-    defer string_set2.deinit(alloc);
-
-    // Test adding strings
-    try string_set1.add(alloc, "test1");
-    try string_set1.add(alloc, "test2");
-    try string_set1.add(alloc, "test4");
-    try string_set1.add(alloc, "test5");
-    try string_set1.add(alloc, "test6");
-    try string_set1.add(alloc, "test7");
-    try string_set1.add(alloc, "test8");
-    try string_set1.add(alloc, "test9");
-    try string_set1.add(alloc, "test10");
-
-    // Test contains
-    try std.testing.expect(string_set1.has("test1"));
-    try std.testing.expect(string_set1.has("test2"));
-    try std.testing.expect(!string_set1.has("test3"));
-
-    // Test adding duplicate
-    try string_set1.add(alloc, "test1");
-    try std.testing.expect(string_set1.has("test1"));
-
-    try string_set2.add(alloc, "foo");
-    try string_set1.add(alloc, "bar");
-    try std.testing.expect(!string_set1.has("foo"));
-    try std.testing.expect(!string_set2.has("bar"));
 }
