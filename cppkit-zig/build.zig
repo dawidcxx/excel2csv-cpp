@@ -89,7 +89,7 @@ fn gatherCompileCommandEntries(
             for (compile_step.root_module.link_objects.items) |link_object| {
                 switch (link_object) {
                     .c_source_file => |csf| {
-                        const file_path = getFilePath(csf.file) orelse break;
+                        const file_path = getFilePath(csf.file) orelse continue;
                         try compile_commands_db.update(
                             file_path,
                             headers.items,
@@ -122,14 +122,6 @@ fn getFilePath(lazyPath: std.Build.LazyPath) ?[]const u8 {
         },
         else => return null,
     }
-}
-
-fn cloneStringSlice(gpa: std.mem.Allocator, container: []const []const u8) error{OutOfMemory}![]const []const u8 {
-    const result = try gpa.alloc([]const u8, container.len);
-    for (container, 0..) |str, i| {
-        result[i] = try gpa.dupe(u8, str);
-    }
-    return result;
 }
 
 const CompileCommand = struct {
