@@ -79,6 +79,7 @@ pub fn build(b: *std.Build) void {
     linkupModule(test_mod);
     const test_exe = b.addExecutable(.{ .name = "excel2csv_tests", .root_module = test_mod });
     CDB_TARGETS.appendAssumeCapacity(test_exe);
+    cpp.addCompileCommands(test_exe);
 
     const test_exe_run = b.addRunArtifact(test_exe);
     if (b.args) |args| {

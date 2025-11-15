@@ -25,6 +25,7 @@ pub fn addCompileCommandsStep(b: *std.Build) void {
         .owner = b,
         .makeFn = makeCompileCommandsStep,
     });
+
     const top_level_step = b.step("compile-commands", "Build compile_commands.json file from marked targets");
     top_level_step.dependOn(create_compile_commands_step);
 }
@@ -32,13 +33,6 @@ pub fn addCompileCommandsStep(b: *std.Build) void {
 pub fn build(b: *std.Build) void {
     _ = b;
 }
-
-const CompileCommandsEntry = struct {
-    file: []const u8,
-    flags: []const []const u8,
-    linkObjects: []const []const u8,
-    includes: []const []const u8,
-};
 
 fn makeCompileCommandsStep(step: *std.Build.Step, make_options: std.Build.Step.MakeOptions) anyerror!void {
     _ = make_options;
@@ -49,19 +43,45 @@ fn makeCompileCommandsStep(step: *std.Build.Step, make_options: std.Build.Step.M
     var compile_commands_db = CompileCommandsDb.init(alloc);
     for (root_levels) |root_level| {
         const root_level_step = &root_level.step;
-        gatherCompileCommandEntries(alloc, root_level_step, &compile_commands_db) catch {
+        gatherCompileCommandEntries(
+            step,
+            root_level_step,
+            &compile_commands_db,
+        ) catch {
             @panic("Error while gathering compile command entries");
         };
     }
 
-    compile_commands_db.forEach(printCompileCommand);
+    var compile_commands_it = compile_commands_db.compile_commands_by_file_name.valueIterator();
+    var jsonWriter = std.Io.Writer.Allocating.init(alloc);
+    defer jsonWriter.deinit();
+
+    var strigify = std.json.Stringify{
+        .writer = &jsonWriter.writer,
+        .options = .{ .emit_null_optional_fields = true, .whitespace = .indent_2 },
+    };
+    try strigify.beginArray();
+    while (compile_commands_it.next()) |compile_command_ptr| {
+        const cc = compile_command_ptr.*;
+        const jsonEntry = try cc.toJson(alloc, b.build_root.path.?);
+        try strigify.write(jsonEntry);
+    }
+    try strigify.endArray();
+
+    const jsonString: []const u8 = try jsonWriter.toOwnedSlice();
+    defer alloc.free(jsonString);
+
+    std.log.info("Generated JSON: {s}", .{jsonString});
 }
 
 fn gatherCompileCommandEntries(
-    alloc: std.mem.Allocator,
+    owning_step: *std.Build.Step,
     step: *std.Build.Step,
     compile_commands_db: *CompileCommandsDb,
 ) !void {
+    const b = owning_step.owner;
+    const alloc = b.allocator;
+
     for (step.dependencies.items) |dependency| {
         if (dependency.cast(std.Build.Step.Compile)) |compile_step| {
             if (!isCompileCommandsMarked(compile_step)) continue;
@@ -69,12 +89,8 @@ fn gatherCompileCommandEntries(
             var headers: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, 16);
             defer headers.deinit(alloc);
             for (compile_step.root_module.include_dirs.items) |d| {
-                switch (d.path) {
-                    .cwd_relative => |path| {
-                        try headers.append(alloc, path);
-                    },
-                    else => {},
-                }
+                const path = getIncludeDirPath(d) orelse continue;
+                try headers.append(alloc, path);
             }
 
             var libraries: std.ArrayListUnmanaged([]const u8) = try .initCapacity(alloc, 16);
@@ -113,12 +129,21 @@ fn gatherCompileCommandEntries(
                 }
             }
         }
-        try gatherCompileCommandEntries(alloc, dependency, compile_commands_db);
+        try gatherCompileCommandEntries(owning_step, dependency, compile_commands_db);
     }
 }
 
 fn getFilePath(lazyPath: std.Build.LazyPath) ?[]const u8 {
     switch (lazyPath) {
+        .cwd_relative => |cwd| {
+            return cwd;
+        },
+        else => return null,
+    }
+}
+
+fn getIncludeDirPath(include_dir: std.Build.Module.IncludeDir) ?[]const u8 {
+    switch (include_dir.path) {
         .cwd_relative => |cwd| {
             return cwd;
         },
@@ -132,22 +157,6 @@ fn isCompileCommandsMarked(compile: *std.Build.Step.Compile) bool {
     }
     return false;
 }
-
-const CompileCommand = struct {
-    file_name: []const u8,
-    flags: StringSet,
-    headers: StringSet,
-    libraries: StringSet,
-
-    pub fn init(file_name: []const u8) CompileCommand {
-        return .{
-            .file_name = file_name,
-            .flags = .init(),
-            .headers = .init(),
-            .libraries = .init(),
-        };
-    }
-};
 
 const CompileCommandsDb = struct {
     const Self = @This();
@@ -232,7 +241,7 @@ const StringSet = struct {
         return self.map.contains(key);
     }
 
-    fn count(self: *Self) u32 {
+    fn count(self: Self) u32 {
         return self.map.count();
     }
 
@@ -259,6 +268,77 @@ fn printCompileCommand(cc: CompileCommand) void {
         std.log.info("    - {s}", .{flag.*});
     }
 }
+
+const CompileCommandJson = struct {
+    arguments: []const []const u8,
+    directory: []const u8,
+    file: []const u8,
+    output: []const u8,
+    pub fn deinit(self: CompileCommandJson, alloc: std.mem.Allocator) void {
+        for (self.arguments) |arg| alloc.free(arg);
+        alloc.free(self.arguments);
+        alloc.free(self.directory);
+        alloc.free(self.file);
+        alloc.free(self.output);
+    }
+};
+
+const CompileCommand = struct {
+    file_name: []const u8,
+    flags: StringSet,
+    headers: StringSet,
+    libraries: StringSet,
+
+    pub fn init(file_name: []const u8) CompileCommand {
+        return .{
+            .file_name = file_name,
+            .flags = .init(),
+            .headers = .init(),
+            .libraries = .init(),
+        };
+    }
+
+    pub fn toJson(self: CompileCommand, alloc: std.mem.Allocator, project_root: []const u8) !CompileCommandJson {
+        const file = try alloc.dupe(u8, self.file_name);
+        errdefer alloc.free(file);
+
+        var arguments_builder = try std.ArrayListUnmanaged([]const u8).initCapacity(
+            alloc,
+            4 + self.flags.count() + self.headers.count() + self.libraries.count(),
+        );
+        errdefer {
+            for (arguments_builder.items) |i| alloc.free(i);
+            arguments_builder.deinit(alloc);
+        }
+
+        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "clang"));
+        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, self.file_name));
+        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "-o"));
+        arguments_builder.appendAssumeCapacity(try std.mem.concat(alloc, u8, &.{ "/tmp", self.file_name, ".o" }));
+
+        var flagsIt = self.flags.map.keyIterator();
+        while (flagsIt.next()) |flag| {
+            arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, flag.*));
+        }
+
+        var libsIt = self.libraries.map.keyIterator();
+        while (libsIt.next()) |lib| {
+            arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, lib.*));
+        }
+
+        var headersIt = self.headers.map.keyIterator();
+        while (headersIt.next()) |header| {
+            arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, header.*));
+        }
+
+        return .{
+            .file = file,
+            .arguments = try arguments_builder.toOwnedSlice(alloc),
+            .directory = try alloc.dupe(u8, project_root),
+            .output = try std.mem.concat(alloc, u8, &.{ "/tmp", self.file_name, ".o" }),
+        };
+    }
+};
 
 test "CompileCommandsDb checks" {
     std.testing.log_level = .debug;
