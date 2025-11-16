@@ -303,7 +303,7 @@ const CompileCommand = struct {
         const input_file = try std.fs.path.resolve(alloc, &.{ project_root, self.file_name });
         errdefer alloc.free(input_file);
 
-        const as_object_file = try std.fmt.allocPrint(alloc, "{s}.o", .{self.file_name});
+        const as_object_file = try std.fmt.allocPrint(alloc, "{s}.o", .{std.fs.path.basename(self.file_name)});
         defer alloc.free(as_object_file);
 
         const output_file = try std.fs.path.resolve(alloc, &.{ "/tmp", as_object_file });
@@ -317,7 +317,7 @@ const CompileCommand = struct {
             arguments_builder.deinit(alloc);
         }
 
-        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "clang"));
+        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "clang++"));
         arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, input_file));
         arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "-o"));
         arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, output_file));

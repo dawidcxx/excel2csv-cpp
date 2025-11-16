@@ -35,7 +35,9 @@ pub fn build(b: *std.Build) void {
     app_mod.addCSourceFiles(.{
         .files = app_mod_srcs,
         .language = .cpp,
-        .flags = &.{ "-std=c++20", "-fcoroutines" },
+        .flags = &.{
+            "-std=c++20",
+        },
     });
 
     linkupModule(app_mod);
@@ -74,7 +76,7 @@ pub fn build(b: *std.Build) void {
     test_mod.addCSourceFiles(.{
         .files = test_mod_srcs,
         .language = .cpp,
-        .flags = &.{ "-std=c++20", "-fcoroutines" },
+        .flags = &.{"-std=c++20"},
     });
     linkupModule(test_mod);
     const test_exe = b.addExecutable(.{ .name = "excel2csv_tests", .root_module = test_mod });
