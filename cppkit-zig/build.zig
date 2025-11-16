@@ -71,7 +71,8 @@ fn makeCompileCommandsStep(step: *std.Build.Step, make_options: std.Build.Step.M
     const jsonString: []const u8 = try jsonWriter.toOwnedSlice();
     defer alloc.free(jsonString);
 
-    std.log.info("Generated JSON: {s}", .{jsonString});
+    const compile_commands_file = try b.build_root.handle.createFile("compile_commands.json", .{});
+    try compile_commands_file.writeAll(jsonString);
 }
 
 fn gatherCompileCommandEntries(
@@ -328,12 +329,14 @@ const CompileCommand = struct {
 
         var libsIt = self.libraries.map.keyIterator();
         while (libsIt.next()) |lib| {
-            arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, lib.*));
+            const libArg = try std.fmt.allocPrint(alloc, "-l{s}", .{lib.*});
+            arguments_builder.appendAssumeCapacity(libArg);
         }
 
         var headersIt = self.headers.map.keyIterator();
         while (headersIt.next()) |header| {
-            arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, header.*));
+            const headerArg = try std.fmt.allocPrint(alloc, "-I{s}", .{header.*});
+            arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, headerArg));
         }
 
         return .{
