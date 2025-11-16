@@ -299,8 +299,13 @@ const CompileCommand = struct {
     }
 
     pub fn toJson(self: CompileCommand, alloc: std.mem.Allocator, project_root: []const u8) !CompileCommandJson {
-        const file = try alloc.dupe(u8, self.file_name);
-        errdefer alloc.free(file);
+        const input_file = try std.fs.path.resolve(alloc, &.{ project_root, self.file_name });
+        errdefer alloc.free(input_file);
+
+        const as_object_file = try std.fmt.allocPrint(alloc, "{s}.o", .{self.file_name});
+        defer alloc.free(as_object_file);
+
+        const output_file = try std.fs.path.resolve(alloc, &.{ "/tmp", as_object_file });
 
         var arguments_builder = try std.ArrayListUnmanaged([]const u8).initCapacity(
             alloc,
@@ -312,9 +317,9 @@ const CompileCommand = struct {
         }
 
         arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "clang"));
-        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, self.file_name));
+        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, input_file));
         arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, "-o"));
-        arguments_builder.appendAssumeCapacity(try std.mem.concat(alloc, u8, &.{ "/tmp", self.file_name, ".o" }));
+        arguments_builder.appendAssumeCapacity(try alloc.dupe(u8, output_file));
 
         var flagsIt = self.flags.map.keyIterator();
         while (flagsIt.next()) |flag| {
@@ -332,10 +337,10 @@ const CompileCommand = struct {
         }
 
         return .{
-            .file = file,
+            .file = input_file,
             .arguments = try arguments_builder.toOwnedSlice(alloc),
             .directory = try alloc.dupe(u8, project_root),
-            .output = try std.mem.concat(alloc, u8, &.{ "/tmp", self.file_name, ".o" }),
+            .output = output_file,
         };
     }
 };
